@@ -1,0 +1,50 @@
+{
+  "rabbit_version": "4.0",
+  "vhosts": [{ "name": "/" }],
+  "exchanges": [
+    { "name": "vidalstore.eventos",  "vhost": "/", "type": "topic",  "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "vidalstore.comandos", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
+    { "name": "vidalstore.dlx",      "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} }
+  ],
+  "queues": [
+    {
+      "name": "vidalstore.avisos", "vhost": "/", "durable": true, "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-dead-letter-exchange": "vidalstore.dlx",
+        "x-dead-letter-routing-key": "avisos.dlq"
+      }
+    },
+    {
+      "name": "vidalstore.auditoria", "vhost": "/", "durable": true, "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-dead-letter-exchange": "vidalstore.dlx",
+        "x-dead-letter-routing-key": "auditoria.dlq"
+      }
+    },
+    {
+      "name": "vidalstore.correos", "vhost": "/", "durable": true, "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-dead-letter-exchange": "vidalstore.dlx",
+        "x-dead-letter-routing-key": "correos.dlq"
+      }
+    },
+    { "name": "vidalstore.avisos.dlq",    "vhost": "/", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "vidalstore.auditoria.dlq", "vhost": "/", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } },
+    { "name": "vidalstore.correos.dlq",   "vhost": "/", "durable": true, "auto_delete": false, "arguments": { "x-queue-type": "quorum" } }
+  ],
+  "bindings": [
+    { "source": "vidalstore.eventos", "vhost": "/", "destination": "vidalstore.avisos",    "destination_type": "queue", "routing_key": "compra.realizada",  "arguments": {} },
+    { "source": "vidalstore.eventos", "vhost": "/", "destination": "vidalstore.avisos",    "destination_type": "queue", "routing_key": "juego.publicado",   "arguments": {} },
+    { "source": "vidalstore.eventos", "vhost": "/", "destination": "vidalstore.auditoria", "destination_type": "queue", "routing_key": "compra.realizada",  "arguments": {} },
+    { "source": "vidalstore.eventos", "vhost": "/", "destination": "vidalstore.auditoria", "destination_type": "queue", "routing_key": "licencia.revocada", "arguments": {} },
+    { "source": "vidalstore.eventos", "vhost": "/", "destination": "vidalstore.auditoria", "destination_type": "queue", "routing_key": "juego.publicado",   "arguments": {} },
+    { "source": "vidalstore.comandos", "vhost": "/", "destination": "vidalstore.correos",  "destination_type": "queue", "routing_key": "correo.enviar",     "arguments": {} },
+
+    { "source": "vidalstore.dlx", "vhost": "/", "destination": "vidalstore.avisos.dlq",    "destination_type": "queue", "routing_key": "avisos.dlq",    "arguments": {} },
+    { "source": "vidalstore.dlx", "vhost": "/", "destination": "vidalstore.auditoria.dlq", "destination_type": "queue", "routing_key": "auditoria.dlq", "arguments": {} },
+    { "source": "vidalstore.dlx", "vhost": "/", "destination": "vidalstore.correos.dlq",   "destination_type": "queue", "routing_key": "correos.dlq",   "arguments": {} }
+  ]
+}
