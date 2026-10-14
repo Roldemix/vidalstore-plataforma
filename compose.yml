@@ -12,11 +12,33 @@ services:
       - "15672:15672"
     volumes:
       - rabbit1-data:/var/lib/rabbitmq
+      - ./rabbitmq/cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
       interval: 10s
       timeout: 10s
       retries: 10
+
+  rabbit2:
+    image: rabbitmq:4.3-management
+    container_name: vidalstore-rabbit2
+    hostname: rabbit2
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - rabbit2-data:/var/lib/rabbitmq
+      - ./rabbitmq/cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
   postgres:
     image: postgres:18
     container_name: vidalstore-postgres
@@ -37,7 +59,5 @@ services:
 
 volumes:
   rabbit1-data:
+  rabbit2-data:
   postgres-data:
-
-
-  
