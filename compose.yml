@@ -13,6 +13,7 @@ services:
     volumes:
       - rabbit1-data:/var/lib/rabbitmq
       - ./rabbitmq/cluster.conf:/etc/rabbitmq/conf.d/20-cluster.conf:ro
+      - ./rabbitmq/politicas.json:/etc/rabbitmq/politicas.json:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
       interval: 10s

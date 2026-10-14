@@ -1,0 +1,28 @@
+{
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "vidalstore-colas-trabajo",
+      "pattern": "^vidalstore\\.(avisos|auditoria|correos)$",
+      "apply-to": "queues",
+      "priority": 10,
+      "definition": {
+        "max-length": 10000,
+        "overflow": "reject-publish",
+        "message-ttl": 86400000
+      }
+    },
+    {
+      "vhost": "/",
+      "name": "vidalstore-dlq",
+      "pattern": "^vidalstore\\.(avisos|auditoria|correos)\\.dlq$",
+      "apply-to": "queues",
+      "priority": 10,
+      "definition": {
+        "max-length": 100000,
+        "overflow": "reject-publish",
+        "delivery-limit": -1
+      }
+    }
+  ]
+}
