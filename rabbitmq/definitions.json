@@ -1,6 +1,12 @@
 {
   "rabbit_version": "4.0",
   "vhosts": [{ "name": "/" }],
+  "users": [
+    { "name": "vidal", "password": "vidal_dev", "tags": ["administrator"] }
+  ],
+  "permissions": [
+    { "user": "vidal", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*" }
+  ],
   "exchanges": [
     { "name": "vidalstore.eventos",  "vhost": "/", "type": "topic",  "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
     { "name": "vidalstore.comandos", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {} },
@@ -46,5 +52,31 @@
     { "source": "vidalstore.dlx", "vhost": "/", "destination": "vidalstore.avisos.dlq",    "destination_type": "queue", "routing_key": "avisos.dlq",    "arguments": {} },
     { "source": "vidalstore.dlx", "vhost": "/", "destination": "vidalstore.auditoria.dlq", "destination_type": "queue", "routing_key": "auditoria.dlq", "arguments": {} },
     { "source": "vidalstore.dlx", "vhost": "/", "destination": "vidalstore.correos.dlq",   "destination_type": "queue", "routing_key": "correos.dlq",   "arguments": {} }
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "vidalstore-colas-trabajo",
+      "pattern": "^vidalstore\\.(avisos|auditoria|correos)$",
+      "apply-to": "queues",
+      "priority": 10,
+      "definition": {
+        "max-length": 10000,
+        "overflow": "reject-publish",
+        "message-ttl": 86400000
+      }
+    },
+    {
+      "vhost": "/",
+      "name": "vidalstore-dlq",
+      "pattern": "^vidalstore\\.(avisos|auditoria|correos)\\.dlq$",
+      "apply-to": "queues",
+      "priority": 10,
+      "definition": {
+        "max-length": 100000,
+        "overflow": "reject-publish",
+        "delivery-limit": -1
+      }
+    }
   ]
 }
