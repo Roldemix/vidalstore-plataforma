@@ -19,4 +19,24 @@ Manager.
 
 La arquitectura prevista está documentada en [red.md](../../docs/red.md).
 
+## Despliegue de EC2
+
+Con la red creada, el despliegue completo crea un NAT Gateway, agrega la salida
+de las subredes privadas y lanza las siete instancias `t3.micro` descritas en
+[red.md](../../docs/red.md). Todas usan `LabInstanceProfile`, no abren SSH y
+se preparan con Docker y Git:
+
+```bash
+export VPC_ID=vpc-...
+export PUBLIC_SUBNET=subnet-...
+export APP_SUBNET=subnet-...
+export DATA_SUBNET_A=subnet-...
+export DATA_SUBNET_B=subnet-...
+export SECURITY_GROUP=sg-...
+bash deploy/aws/desplegar-ec2.sh
+```
+
+El script es idempotente para el NAT y las instancias existentes. El NAT
+Gateway genera costos mientras permanezca activo.
+
 No se deben guardar credenciales AWS en el repositorio.
