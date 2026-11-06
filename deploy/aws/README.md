@@ -39,4 +39,18 @@ bash deploy/aws/desplegar-ec2.sh
 El script es idempotente para el NAT y las instancias existentes. El NAT
 Gateway genera costos mientras permanezca activo.
 
+## Verificación de permisos
+
+La prueba oficial crea recursos temporales con el prefijo `ep3-permisos` y los
+elimina al finalizar, incluso si una comprobación falla. Desde Git Bash:
+
+```bash
+export MSYS_NO_PATHCONV=1
+bash deploy/aws/verificar-permisos.sh
+```
+
+El resultado queda en `deploy/aws/permisos.txt`. En Windows, el verificador
+detecta automáticamente el Session Manager Plugin instalado en su ruta estándar
+aunque no esté agregado al `PATH`.
+
 No se deben guardar credenciales AWS en el repositorio.
