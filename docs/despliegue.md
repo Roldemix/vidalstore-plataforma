@@ -34,7 +34,42 @@ aws ec2 describe-instances --filters Name=tag:Name,Values='vidalstore-*' \
 
 ## Azure
 
-La red y las dos máquinas deben crearse desde scripts en `deploy/azure/`,
-probarse y quedar desasignadas al entregar. Las salidas de rutas, IP privada,
-proxy de salida por `gw-azure` y estado `deallocated` deben quedar en el
-informe.
+La infraestructura Azure de la evidencia se creó en `northcentralus` dentro
+del grupo `rg-vidalstore-e2`. No hay scripts Azure versionados en este
+repositorio; las órdenes siguientes permiten inspeccionar y reproducir la
+configuración sin guardar credenciales:
+
+```bash
+az group show --name rg-vidalstore-e2 --output table
+az vm list --resource-group rg-vidalstore-e2 \
+  --show-details --query "[].[name, powerState, privateIps, publicIps]" \
+  --output table
+az network vnet subnet list --resource-group rg-vidalstore-e2 \
+  --vnet-name vnet-vidalstore --output table
+az network route-table route list --resource-group rg-vidalstore-e2 \
+  --route-table-name rt-bff-gw --output table
+az network nic show --resource-group rg-vidalstore-e2 \
+  --name nic-gw-azure \
+  --query "{ipForwarding:enableIPForwarding,privateIp:ipConfigurations[0].privateIPAddress}" \
+  --output json
+```
+
+La prueba de salida del BFF debe ejecutarse desde la VM privada y debe
+devolver la IP pública del gateway:
+
+```bash
+az vm run-command invoke \
+  --resource-group rg-vidalstore-e2 \
+  --name bff \
+  --command-id RunShellScript \
+  --scripts "curl --fail --silent https://api.ipify.org"
+```
+
+Antes de entregar, guardar esas salidas en el informe y desasignar las VMs
+para evitar costos:
+
+```bash
+az vm deallocate --resource-group rg-vidalstore-e2 --name gw-azure bff
+az vm list --resource-group rg-vidalstore-e2 \
+  --show-details --query "[].[name, powerState]" --output table
+```
