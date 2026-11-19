@@ -1,0 +1,42 @@
+# Maquina `gw-azure`: unico punto publico del sistema. Termina TLS con
+# Let's Encrypt, sirve el frontend estatico y reenvia /v1/* a gw-aws.
+name: vidalstore-gw-azure
+
+services:
+  frontend:
+    image: ${REGISTRO:-ghcr.io/roldemix}/vidalstore-frontend:${FRONTEND_VERSION:-latest}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  borde:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      DOMINIO: ${DOMINIO:?definir en /opt/vidalstore/gw-azure.env}
+      ACME_EMAIL: ${ACME_EMAIL:?definir en /opt/vidalstore/gw-azure.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/vidalstore/certs/aws-ca.crt:/certs/aws-ca.crt:ro
+      - caddy-datos:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  caddy-datos:
+  caddy-config:

@@ -1,0 +1,21 @@
+# Borde privado de AWS. Recibe HTTPS desde gw-azure por la ruta privada y
+# entrega /v1/* al gateway, que expone sus rutas con ese mismo prefijo y
+# autentica antes de reenviar al BFF (Azure).
+# La administracion (3020) NO se publica aqui: solo por tunel de Session Manager.
+{
+	# La CA interna no se instala en el sistema: viaja como archivo a gw-azure.
+	skip_install_trust
+	auto_https disable_redirects
+}
+
+https://10.0.1.10 {
+	tls internal
+
+	encode zstd gzip
+
+	handle /v1/* {
+		reverse_proxy 10.0.11.10:8080
+	}
+
+	respond "No encontrado" 404
+}

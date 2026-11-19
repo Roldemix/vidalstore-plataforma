@@ -1,0 +1,113 @@
+name: Desplegar
+
+# El despliegue ocurre solo al integrar a main un cambio en las versiones.
+# Las imagenes las publica el imagen.yml de cada repositorio con el SHA del
+# commit; aqui solo se cambia el tag que cada maquina ejecuta.
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/versiones.env
+
+permissions:
+  contents: read
+
+concurrency:
+  group: despliegue-main
+  cancel-in-progress: false
+
+jobs:
+  aws:
+    name: AWS (servicios y gestion)
+    # Runner instalado en la maquina `servicios`, con etiqueta propia.
+    runs-on: [self-hosted, linux, aws]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticarse en GHCR
+        env:
+          TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          USUARIO: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$USUARIO" --password-stdin
+
+      - name: Leer versiones
+        run: grep -E '^[A-Z0-9_]+=' deploy/versiones.env >> "$GITHUB_ENV"
+
+      - name: Servicios de aplicacion
+        run: |
+          set -euo pipefail
+          docker compose --env-file /opt/vidalstore/servicios/.env \
+            -f deploy/aws/servicios/compose.yml pull
+          docker compose --env-file /opt/vidalstore/servicios/.env \
+            -f deploy/aws/servicios/compose.yml up -d --remove-orphans
+
+      - name: Administracion por Session Manager
+        env:
+          REGION: us-east-1
+          INSTANCIA: vidalstore-gestion
+        run: |
+          set -euo pipefail
+          ID="$(aws ec2 describe-instances --region "$REGION" \
+            --filters "Name=tag:Name,Values=$INSTANCIA" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          if [[ -z "$ID" || "$ID" == "None" ]]; then
+            echo "No se encontro la instancia $INSTANCIA en ejecucion." >&2
+            exit 1
+          fi
+
+          # El compose viaja con el checkout y se escribe en la maquina antes de
+          # desplegar: asi `gestion` nunca queda con un archivo viejo.
+          COMPOSE="$(base64 -w0 deploy/aws/gestion/compose.yml)"
+          ORDEN="set -e; echo '$COMPOSE' | base64 -d > /opt/vidalstore/gestion/compose.yml; cd /opt/vidalstore/gestion; REGISTRO='$REGISTRO' ADMIN_VERSION='$ADMIN_VERSION' docker compose pull; REGISTRO='$REGISTRO' ADMIN_VERSION='$ADMIN_VERSION' docker compose up -d --remove-orphans"
+
+          COMANDO="$(aws ssm send-command --region "$REGION" \
+            --document-name AWS-RunShellScript \
+            --instance-ids "$ID" \
+            --comment "despliegue $GITHUB_SHA" \
+            --parameters "commands=[\"$ORDEN\"]" \
+            --query 'Command.CommandId' --output text)"
+
+          if ! aws ssm wait command-executed --region "$REGION" \
+            --command-id "$COMANDO" --instance-id "$ID"; then
+            aws ssm get-command-invocation --region "$REGION" \
+              --command-id "$COMANDO" --instance-id "$ID" \
+              --query '[Status,StandardOutputContent,StandardErrorContent]' --output text || true
+            exit 1
+          fi
+
+  azure:
+    name: Azure (borde y BFF)
+    # Runner instalado en gw-azure, con etiqueta propia.
+    runs-on: [self-hosted, linux, azure]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Autenticarse en GHCR
+        env:
+          TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          USUARIO: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$USUARIO" --password-stdin
+
+      - name: Leer versiones
+        run: grep -E '^[A-Z0-9_]+=' deploy/versiones.env >> "$GITHUB_ENV"
+
+      - name: BFF en la maquina privada
+        run: |
+          set -euo pipefail
+          # El compose tambien viaja con el checkout: la maquina solo guarda .env.
+          ssh -i /opt/vidalstore/llaves/bff_ed25519 \
+            -o StrictHostKeyChecking=accept-new \
+            azureuser@10.1.2.10 \
+            "cat > /opt/vidalstore/bff/compose.yml" < deploy/azure/bff/compose.yml
+          ssh -i /opt/vidalstore/llaves/bff_ed25519 \
+            -o StrictHostKeyChecking=accept-new \
+            azureuser@10.1.2.10 \
+            "cd /opt/vidalstore/bff && REGISTRO='$REGISTRO' BFF_VERSION='$BFF_VERSION' docker compose pull && REGISTRO='$REGISTRO' BFF_VERSION='$BFF_VERSION' docker compose up -d --remove-orphans"
+
+      - name: Borde publico y frontend
+        run: |
+          set -euo pipefail
+          docker compose --env-file /opt/vidalstore/gw-azure/.env \
+            -f deploy/azure/gw-azure/compose.yml pull
+          docker compose --env-file /opt/vidalstore/gw-azure/.env \
+            -f deploy/azure/gw-azure/compose.yml up -d --remove-orphans

@@ -39,6 +39,21 @@ bash deploy/aws/desplegar-ec2.sh
 El script es idempotente para el NAT y las instancias existentes. El NAT
 Gateway genera costos mientras permanezca activo.
 
+## Reglas de la EP3
+
+Después de lanzar las instancias, el Security Group se ajusta al diseño de la
+EP3 (sin nada abierto a Internet, 443 y los puertos de servicio solo desde la
+VNet de Azure):
+
+```bash
+export VPC_ID=vpc-...
+bash deploy/aws/permisos-e3.sh
+```
+
+El script también avisa si falta la ruta hacia `10.1.0.0/16` (peering o VPN de
+la EP2). El despliegue continuo y los runners están en
+[despliegue.md](../../docs/despliegue.md).
+
 ## Verificación de permisos
 
 La prueba oficial crea recursos temporales con el prefijo `ep3-permisos` y los
