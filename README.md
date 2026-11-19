@@ -40,3 +40,18 @@ docker compose exec broker-1 /opt/kafka/bin/kafka-topics.sh \
 
 No se deben guardar credenciales reales en el repositorio. Los archivos `.env`
 locales están excluidos por la configuración de la plataforma.
+
+## Entrega 3
+
+La EP3 agrega el manejo de errores con `.dlt`, el administrador de Kafka, las
+pruebas en CI y el despliegue en dos nubes:
+
+- [Despliegue y runners](docs/despliegue.md)
+- [Diseño de red AWS + Azure](docs/red.md)
+- [Consumer groups y rebobinado](docs/consumer-groups.md)
+- Versiones desplegadas: [`deploy/versiones.env`](deploy/versiones.env)
+- Flujo de despliegue: [`.github/workflows/desplegar.yml`](.github/workflows/desplegar.yml)
+
+El frontend de la nube se sirve como sitio estático con Caddy y usa el mismo
+origen (`/v1/*`) para la API; en local sigue en <http://localhost:4200>.
+

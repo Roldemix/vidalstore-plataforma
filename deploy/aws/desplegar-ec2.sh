@@ -52,10 +52,8 @@ for route_table_name in vidalstore-app-rt vidalstore-data-rt; do
       --destination-cidr-block 0.0.0.0/0 --nat-gateway-id "$NAT_ID" >/dev/null
 done
 
-aws ec2 authorize-security-group-ingress --region "$REGION" --group-id "$SECURITY_GROUP" \
-  --ip-permissions 'IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges=[{CidrIp=0.0.0.0/0,Description="Public HTTP"}]' \
-  'IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges=[{CidrIp=0.0.0.0/0,Description="Public HTTPS"}]' \
-  >/dev/null 2>&1 || true
+# El SG no abre 80/443 a Internet: el unico borde publico es gw-azure.
+# Las reglas de la EP3 las aplica deploy/aws/permisos-e3.sh.
 
 USER_DATA="$(cat <<'EOF'
 #!/bin/bash

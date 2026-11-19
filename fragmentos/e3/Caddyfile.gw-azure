@@ -1,0 +1,23 @@
+# Unico borde publico. Let's Encrypt valida por HTTP-01 (puerto 80) y el sitio
+# queda en 443. El frontend se sirve del mismo origen y /v1/* viaja a gw-aws
+# por la ruta privada entre nubes.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMINIO} {
+	encode zstd gzip
+
+	handle /v1/* {
+		reverse_proxy https://10.0.1.10 {
+			transport http {
+				# CA interna exportada por gw-aws.
+				tls_trusted_ca_certs /certs/aws-ca.crt
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}

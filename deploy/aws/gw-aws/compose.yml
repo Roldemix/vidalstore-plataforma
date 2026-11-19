@@ -1,0 +1,25 @@
+# Maquina `gw-aws`: borde privado de AWS. Solo acepta 443 desde gw-azure.
+name: vidalstore-gw-aws
+
+services:
+  borde:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-datos:/data
+      - caddy-config:/config
+    healthcheck:
+      # El API de administracion de Caddy escucha en loopback del contenedor:
+      # sirve para saber que el proceso esta vivo sin depender del certificado.
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  caddy-datos:
+  caddy-config:

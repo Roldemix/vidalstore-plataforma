@@ -1,0 +1,84 @@
+# Servicios de aplicacion que viven en la maquina `servicios` de AWS.
+# Secretos y datos de conexion se leen de /opt/vidalstore/servicios.env
+# (no versionado). Las versiones llegan desde deploy/versiones.env.
+name: vidalstore-servicios
+
+x-cognito: &cognito
+  COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:?definir en /opt/vidalstore/servicios.env}
+  COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:?definir en /opt/vidalstore/servicios.env}
+
+x-kafka: &kafka
+  KAFKA_BROKERS: ${KAFKA_BROKERS:-10.0.21.10:9092,10.0.22.10:9092,10.0.21.11:9092}
+
+x-db: &db
+  DB_HOST: ${DB_HOST:-10.0.21.20}
+  DB_PORT: "5432"
+  DB_USER: ${DB_USER:?definir en /opt/vidalstore/servicios.env}
+  DB_PASSWORD: ${DB_PASSWORD:?definir en /opt/vidalstore/servicios.env}
+  DB_NAME: ${DB_NAME:-vidalstore}
+
+x-rabbit: &rabbit
+  RABBITMQ_URL: ${RABBITMQ_URL:?definir en /opt/vidalstore/servicios.env}
+
+services:
+  gateway:
+    image: ${REGISTRO:-ghcr.io/roldemix}/vidalstore-gateway:${GATEWAY_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *cognito
+      PORT: "8080"
+      # El BFF vive en Azure y se alcanza por la ruta privada de la EP2.
+      BFF_URL: ${BFF_URL:-http://10.1.2.10:8081}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8080,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  catalogo:
+    image: ${REGISTRO:-ghcr.io/roldemix}/vidalstore-catalogo-service:${CATALOGO_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      <<: [*cognito, *kafka, *rabbit]
+      PORT: "3001"
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3001,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  licencias:
+    image: ${REGISTRO:-ghcr.io/roldemix}/vidalstore-licencias-service:${LICENCIAS_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      <<: [*cognito, *kafka, *rabbit, *db]
+      PORT: "3002"
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3002,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  eventos:
+    image: ${REGISTRO:-ghcr.io/roldemix}/vidalstore-eventos:${EVENTOS_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      <<: [*kafka, *rabbit, *db]
+      PORT: "3010"
+    ports:
+      - "3010:3010"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3010/salud').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s

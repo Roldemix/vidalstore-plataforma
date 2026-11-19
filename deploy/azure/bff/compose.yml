@@ -1,0 +1,25 @@
+# Maquina `bff` de Azure. Solo recibe 8081 desde la VPC de AWS y desde
+# gw-azure: no tiene IP publica.
+name: vidalstore-bff-azure
+
+services:
+  bff:
+    image: ${REGISTRO:-ghcr.io/roldemix}/vidalstore-bff:${BFF_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      PORT: "8081"
+      # El BFF compone sobre la base de cada servicio, por la ruta privada que
+      # une las dos nubes. Los servicios de AWS validan el mismo JWT.
+      CATALOGO_URL: ${CATALOGO_URL:-http://10.0.11.10:3001}
+      LICENCIAS_URL: ${LICENCIAS_URL:-http://10.0.11.10:3002}
+      EVENTOS_URL: ${EVENTOS_URL:-http://10.0.11.10:3010}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:?definir en /opt/vidalstore/bff/.env}
+      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:?definir en /opt/vidalstore/bff/.env}
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8081,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
