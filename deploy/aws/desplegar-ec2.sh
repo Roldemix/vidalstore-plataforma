@@ -59,9 +59,26 @@ USER_DATA="$(cat <<'EOF'
 #!/bin/bash
 set -euxo pipefail
 dnf update -y
-dnf install -y docker git
+dnf install -y docker git unzip
+dnf install -y libicu || true
 systemctl enable --now docker
 usermod -aG docker ec2-user
+
+# AWS CLI v2: el runner de `servicios` lo necesita para SSM.
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL -o /tmp/awscliv2.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+fi
+
+# Plugin `docker compose`: algunos paquetes de docker no lo incluyen.
+if ! docker compose version >/dev/null 2>&1; then
+  mkdir -p /usr/local/lib/docker/cli-plugins
+  curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64
+  chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+fi
+
 mkdir -p /opt/vidalstore
 cat >/opt/vidalstore/ROLE <<ROLE
 ${ROLE}

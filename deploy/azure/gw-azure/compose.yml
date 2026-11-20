@@ -20,8 +20,8 @@ services:
       frontend:
         condition: service_healthy
     environment:
-      DOMINIO: ${DOMINIO:?definir en /opt/vidalstore/gw-azure.env}
-      ACME_EMAIL: ${ACME_EMAIL:?definir en /opt/vidalstore/gw-azure.env}
+      DOMINIO: ${DOMINIO:?definir en /opt/vidalstore/gw-azure/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?definir en /opt/vidalstore/gw-azure/.env}
     ports:
       - "80:80"
       - "443:443"
