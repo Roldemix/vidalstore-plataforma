@@ -1,6 +1,5 @@
-# Unico borde publico. Let's Encrypt valida por HTTP-01 (puerto 80) y el sitio
-# queda en 443. El frontend se sirve del mismo origen y /v1/* viaja a gw-aws
-# por la ruta privada entre nubes.
+# Unico borde publico: Let's Encrypt (HTTP-01 por el 80), sitio en 443.
+# /v1/* viaja por HTTPS publico al borde de AWS (sslip.io, cert real).
 {
 	email {$ACME_EMAIL}
 }
@@ -9,15 +8,10 @@
 	encode zstd gzip
 
 	handle /v1/* {
-		reverse_proxy https://10.0.1.10 {
-			transport http {
-				# CA interna exportada por gw-aws.
-				tls_trusted_ca_certs /certs/aws-ca.crt
-			}
-		}
+		reverse_proxy {$AWS_URL}
 	}
 
 	handle {
-		reverse_proxy frontend:80
+		reverse_proxy 127.0.0.1:8080
 	}
 }

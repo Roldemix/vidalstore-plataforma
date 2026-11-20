@@ -1,16 +1,15 @@
-# Borde privado de AWS. Recibe HTTPS desde gw-azure por la ruta privada y
-# entrega /v1/* al gateway, que expone sus rutas con ese mismo prefijo y
-# autentica antes de reenviar al BFF (Azure).
-# La administracion (3020) NO se publica aqui: solo por tunel de Session Manager.
+# Borde de AWS. Dominio <elastic-ip-con-guiones>.sslip.io (variable DOMINIO,
+# la escribe el workflow a partir de vars.AWS_URL). Certificado automatico.
+# 443 solo acepta a gw-azure (Security Group); 80 queda abierto para el reto ACME.
+# La administracion (3020) NO se publica: solo por tunel de Session Manager.
 {
-	# La CA interna no se instala en el sistema: viaja como archivo a gw-azure.
-	skip_install_trust
-	auto_https disable_redirects
+	# PRUEBAS (staging): sin limite de emision. Cuando el cert de pruebas salga
+	# bien, COMENTAR esta linea, hacer merge y el workflow reinicia Caddy.
+	# NO borrar el volumen /data.
+	acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
 }
 
-https://10.0.1.10 {
-	tls internal
-
+{$DOMINIO} {
 	encode zstd gzip
 
 	handle /v1/* {
