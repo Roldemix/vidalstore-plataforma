@@ -1,67 +1,49 @@
 #!/usr/bin/env bash
-# Ajusta el Security Group de AWS al esquema de la EP3:
-#   - 443 (gw-aws) y 3001/3002/3010 (servicios) solo desde la VNet de Azure
-#   - 8080 del gateway solo dentro del propio SG (ya lo abre crear-infraestructura.sh)
-#   - nada abierto a Internet y 22 cerrado: todo se administra con Session Manager
-#
-# El trafico de Azure llega NATeado por gw-azure, por eso se permite el /16
-# completo: cubre a gw-azure (10.1.1.10) y a bff (10.1.2.10).
-#
-# Uso: bash deploy/aws/permisos-e3.sh
+# Reglas de red de AWS para la EP3.
+#   gw-aws:  80 abierto (reto ACME); 443 SOLO desde la IP publica de gw-azure.
+#   interno: 3001/3002/3010 desde la VNet de Azure; nada abierto a Internet; 22 cerrado.
+# Uso: GW_AZURE_IP=<ip publica de gw-azure> VPC_ID=vpc-... bash deploy/aws/permisos-e3.sh
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-VPC_ID="${VPC_ID:?Definir VPC_ID (lo imprime crear-infraestructura.sh)}"
+VPC_ID="${VPC_ID:?Definir VPC_ID}"
+GW_AZURE_IP="${GW_AZURE_IP:?Definir GW_AZURE_IP (IP publica de gw-azure)}"
 ORIGEN="${ORIGEN_AZURE:-10.1.0.0/16}"
 
-SG="$(aws ec2 describe-security-groups --region "$REGION" \
-  --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=vidalstore-internal" \
-  --query 'SecurityGroups[0].GroupId' --output text)"
-
-if [[ "$SG" == "None" || -z "$SG" ]]; then
-  echo "No se encontro el Security Group vidalstore-internal. Ejecutar crear-infraestructura.sh." >&2
-  exit 1
-fi
-
-quitar() {
-  local puerto="$1" cidr="$2"
-  aws ec2 revoke-security-group-ingress --region "$REGION" --group-id "$SG" \
-    --ip-permissions "IpProtocol=tcp,FromPort=$puerto,ToPort=$puerto,IpRanges=[{CidrIp=$cidr}]" \
-    >/dev/null 2>&1 || true
+sg_id() {
+  aws --region "$REGION" ec2 describe-security-groups \
+    --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=$1" \
+    --query 'SecurityGroups[0].GroupId' --output text
 }
-
-permitir() {
-  local puerto="$1" cidr="$2" descripcion="$3"
-  aws ec2 authorize-security-group-ingress --region "$REGION" --group-id "$SG" \
-    --ip-permissions "IpProtocol=tcp,FromPort=$puerto,ToPort=$puerto,IpRanges=[{CidrIp=$cidr,Description=\"$descripcion\"}]" \
-    >/dev/null 2>&1 || true
-}
-
-# Reglas de la EP2 que ya no corresponden: el unico borde publico es Azure.
-for puerto in 80 443 22; do
-  quitar "$puerto" 0.0.0.0/0
+SG_INT="$(sg_id vidalstore-internal)"
+SG_GW="$(sg_id vidalstore-gw-aws)"
+for v in "$SG_INT" "$SG_GW"; do
+  [[ "$v" != "None" && -n "$v" ]] || { echo "Falta un SG; ejecutar crear-infraestructura.sh y desplegar-ec2.sh" >&2; exit 1; }
 done
 
-permitir 443 "$ORIGEN" "gw-azure a gw-aws (HTTPS interno)"
-permitir 3001 "$ORIGEN" "bff a catalogo"
-permitir 3002 "$ORIGEN" "bff a licencias"
-permitir 3010 "$ORIGEN" "bff a eventos"
+quitar()   { aws --region "$REGION" ec2 revoke-security-group-ingress --group-id "$1" --ip-permissions "IpProtocol=tcp,FromPort=$2,ToPort=$2,IpRanges=[{CidrIp=$3}]" >/dev/null 2>&1 || true; }
+permitir() { aws --region "$REGION" ec2 authorize-security-group-ingress --group-id "$1" --ip-permissions "IpProtocol=tcp,FromPort=$2,ToPort=$2,IpRanges=[{CidrIp=$3,Description=\"$4\"}]" >/dev/null 2>&1 || true; }
 
-echo "Reglas del SG $SG:"
-aws ec2 describe-security-groups --region "$REGION" --group-id "$SG" \
-  --query 'SecurityGroups[0].IpPermissions[].{protocolo:IpProtocol,desde:FromPort,hasta:ToPort,rangos:IpRanges[].CidrIp}' \
-  --output table
+# SG interno: nada publico; el 443 ya no viene por la ruta privada
+for p in 80 443 22; do quitar "$SG_INT" "$p" 0.0.0.0/0; done
+quitar "$SG_INT" 443 "$ORIGEN"
+permitir "$SG_INT" 3001 "$ORIGEN" "bff a catalogo"
+permitir "$SG_INT" 3002 "$ORIGEN" "bff a licencias"
+permitir "$SG_INT" 3010 "$ORIGEN" "bff a eventos"
 
-# La ruta de vuelta a Azure la deja la EP2 (VPN o peering). Sin ella, gw-aws no
-# responde a gw-azure y el sitio devuelve 502.
-RUTA="$(aws ec2 describe-route-tables --region "$REGION" \
-  --filters "Name=vpc-id,Values=$VPC_ID" \
+# SG de gw-aws
+permitir "$SG_GW" 80 0.0.0.0/0 "reto ACME"
+quitar   "$SG_GW" 443 0.0.0.0/0
+permitir "$SG_GW" 443 "$GW_AZURE_IP/32" "solo gw-azure"
+
+for sg in "$SG_INT" "$SG_GW"; do
+  echo "== $sg"
+  aws --region "$REGION" ec2 describe-security-groups --group-ids "$sg" \
+    --query 'SecurityGroups[0].IpPermissions[].{proto:IpProtocol,desde:FromPort,rangos:IpRanges[].CidrIp}' --output table
+done
+
+RUTA="$(aws --region "$REGION" ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" \
   --query "RouteTables[].Routes[?DestinationCidrBlock=='$ORIGEN'] | []" --output json)"
-
 if [[ "$RUTA" == "[]" ]]; then
-  echo
-  echo "AVISO: la VPC no tiene ruta hacia $ORIGEN. Hay que crear el peering o la"
-  echo "VPN de la EP2 antes de que gw-azure alcance gw-aws."
-else
-  echo "Ruta hacia $ORIGEN presente."
+  echo "AVISO: no hay ruta hacia $ORIGEN (peering/VPN). Sin ella servicios no alcanza a bff (BFF_URL) ni bff a servicios."
 fi

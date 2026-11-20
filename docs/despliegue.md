@@ -86,7 +86,7 @@ En `servicios`, por Session Manager:
 ```bash
 sudo mkdir -p /opt/actions-runner && cd /opt/actions-runner
 curl -o runner.tar.gz -L \
-  https://github.com/actions/runner/releases/download/v2.325.0/actions-runner-linux-x64-2.325.0.tar.gz
+  https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
 sudo tar xzf runner.tar.gz
 sudo dnf install -y libicu || true   # dependencia de .NET en AL2023
 sudo ./config.sh --url https://github.com/Roldemix/vidalstore-plataforma \
@@ -108,18 +108,26 @@ En `gw-azure`, con `az vm run-command invoke`:
 ```bash
 sudo mkdir -p /opt/actions-runner && cd /opt/actions-runner
 curl -o runner.tar.gz -L \
-  https://github.com/actions/runner/releases/download/v2.325.0/actions-runner-linux-x64-2.325.0.tar.gz
+  https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
 sudo tar xzf runner.tar.gz
 sudo ./bin/installdependencies.sh
-sudo ./config.sh --url https://github.com/Roldemix/vidalstore-plataforma \
+sudo chown -R azureuser:azureuser /opt/actions-runner
+sudo -u azureuser env HOME=/home/azureuser ./config.sh \
+  --url https://github.com/Roldemix/vidalstore-plataforma \
   --token <TOKEN_DE_UN_USO> --labels azure --unattended --replace
-sudo ./svc.sh install && sudo ./svc.sh start
+sudo ./svc.sh install azureuser && sudo ./svc.sh start
 ```
 
-El único secreto en GitHub es `GHCR_READ_TOKEN`, un token con `read:packages`
-para descargar las imágenes. No hay credenciales de AWS ni de Azure en GitHub:
-las de AWS las da el perfil de instancia y las de Azure viven solo en las
-máquinas.
+El runner queda como `azureuser` (en el grupo `docker`). Para que pueda leer
+la llave del BFF y escribir el compose del borde:
+
+```bash
+sudo chown -R azureuser:azureuser /opt/vidalstore/gw-azure /opt/vidalstore/llaves
+```
+
+No hay secretos en GitHub: las imágenes de GHCR son públicas y las credenciales
+de AWS y Azure nunca salen de sus máquinas. El runner de AWS usa el perfil de
+instancia y el de Azure solo la llave local hacia `bff`.
 
 ## Preparar AWS
 
@@ -168,15 +176,7 @@ máquinas.
    sudo cp deploy/aws/gestion/.env.ejemplo /opt/vidalstore/gestion/.env
    ```
 
-5. Autenticar GHCR en `servicios` y `gestion` con el mismo token de solo
-   lectura (el flujo lo repite en `servicios` y en `bff`; así el primer
-   despliegue de `gestion` no falla al bajar la imagen privada):
-
-   ```bash
-   echo '<GHCR_READ_TOKEN>' | sudo docker login ghcr.io -u Roldemix --password-stdin
-   ```
-
-6. `gw-aws` no abre SSH: el flujo le escribe `compose.yml` y `Caddyfile` por
+5. `gw-aws` no abre SSH: el flujo le escribe `compose.yml` y `Caddyfile` por
    SSM en cada despliegue. El certificado interno se genera la primera vez y
    su CA hay que copiarla a `gw-azure` una sola vez (si se borra el volumen,
    se repite). En una sesión de Session Manager sobre `gw-aws`:
@@ -291,8 +291,7 @@ Lo que no se puede resolver desde el código:
       repositorio después de la primera ejecución de `imagen.yml`.
 - [ ] Anotar las IP públicas reales (la de `gw-azure` y la de salida de
       `gw-aws`) y el `sslip.io` usado en `DOMINIO`.
-- [ ] Crear `GHCR_READ_TOKEN` y registrar los dos runners autoalojados
-      (`aws` y `azure`).
+- [ ] Registrar los dos runners autoalojados (`aws` y `azure`).
 - [ ] Copiar `aws-ca.crt` a `gw-azure` y comprobar `curl --cacert` contra
       `https://10.0.1.10` desde esa máquina.
 - [ ] Verificar la ruta privada entre Azure y AWS (VPN o peering de la EP2). Sin
