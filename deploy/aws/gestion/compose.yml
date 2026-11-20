@@ -8,11 +8,11 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_BROKERS: ${KAFKA_BROKERS:-10.0.21.10:9092,10.0.22.10:9092,10.0.21.11:9092}
-      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:?definir en /opt/vidalstore/gestion.env}
-      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:?definir en /opt/vidalstore/gestion.env}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:?definir en /opt/vidalstore/gestion/.env}
+      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:?definir en /opt/vidalstore/gestion/.env}
       RABBIT_API_URL: ${RABBIT_API_URL:-http://10.0.21.10:15672}
-      RABBIT_USER: ${RABBITMQ_DEFAULT_USER:?definir en /opt/vidalstore/gestion.env}
-      RABBIT_PASSWORD: ${RABBITMQ_DEFAULT_PASS:?definir en /opt/vidalstore/gestion.env}
+      RABBIT_USER: ${RABBITMQ_DEFAULT_USER:?definir en /opt/vidalstore/gestion/.env}
+      RABBIT_PASSWORD: ${RABBITMQ_DEFAULT_PASS:?definir en /opt/vidalstore/gestion/.env}
       RABBIT_VHOST: /
       PORT: "3020"
     ports:

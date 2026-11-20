@@ -68,9 +68,10 @@ docker pull ghcr.io/roldemix/vidalstore-eventos:<sha>
 3. Al integrar ese cambio a `main`, `desplegar.yml` corre dos trabajos, uno en
    cada nube, con un runner autoalojado por nube:
    - `aws` (etiqueta `aws`, instalado en `servicios`): `docker compose pull` y
-     `up -d` de `deploy/aws/servicios/compose.yml`; y por Session Manager copia
+     `up -d` de `deploy/aws/servicios/compose.yml`; por Session Manager copia
      `deploy/aws/gestion/compose.yml` a `gestion` y ejecuta el mismo
-     `pull` + `up -d`, esperando el resultado del comando.
+     `pull` + `up -d`, esperando el resultado del comando; y hace lo propio con
+     el `compose.yml` y el `Caddyfile` de `gw-aws`.
    - `azure` (etiqueta `azure`, instalado en `gw-azure`): actualiza el borde y
      el frontend, y por SSH copia el compose a `bff` y lo actualiza.
 
@@ -87,16 +88,18 @@ sudo mkdir -p /opt/actions-runner && cd /opt/actions-runner
 curl -o runner.tar.gz -L \
   https://github.com/actions/runner/releases/download/v2.325.0/actions-runner-linux-x64-2.325.0.tar.gz
 sudo tar xzf runner.tar.gz
+sudo dnf install -y libicu || true   # dependencia de .NET en AL2023
 sudo ./config.sh --url https://github.com/Roldemix/vidalstore-plataforma \
-  --token <TOKEN_DE_UN_USO> --labels aws --unattended
+  --token <TOKEN_DE_UN_USO> --labels aws --unattended --replace
 sudo ./svc.sh install && sudo ./svc.sh start
 ```
 
 El token se obtiene en *Settings → Actions → Runners → New self-hosted runner*
 y no se guarda en el repositorio. El runner usa el perfil de instancia
 (`LabInstanceProfile`) para llamar a SSM, así que no hay credenciales AWS en
-GitHub. La cuenta `ec2-user` tiene que estar en el grupo `docker` (lo deja
-`desplegar-ec2.sh`).
+GitHub. La cuenta `ec2-user` tiene que estar en el grupo `docker` y
+`desplegar-ec2.sh` ya deja instalados `aws` (CLI v2) y el plugin
+`docker compose`.
 
 ### Instalar el runner de Azure
 
@@ -107,8 +110,9 @@ sudo mkdir -p /opt/actions-runner && cd /opt/actions-runner
 curl -o runner.tar.gz -L \
   https://github.com/actions/runner/releases/download/v2.325.0/actions-runner-linux-x64-2.325.0.tar.gz
 sudo tar xzf runner.tar.gz
+sudo ./bin/installdependencies.sh
 sudo ./config.sh --url https://github.com/Roldemix/vidalstore-plataforma \
-  --token <TOKEN_DE_UN_USO> --labels azure --unattended
+  --token <TOKEN_DE_UN_USO> --labels azure --unattended --replace
 sudo ./svc.sh install && sudo ./svc.sh start
 ```
 
@@ -164,25 +168,34 @@ máquinas.
    sudo cp deploy/aws/gestion/.env.ejemplo /opt/vidalstore/gestion/.env
    ```
 
-5. Autenticar GHCR en cada máquina con el mismo token de solo lectura:
+5. Autenticar GHCR en `servicios` y `gestion` con el mismo token de solo
+   lectura (el flujo lo repite en `servicios` y en `bff`; así el primer
+   despliegue de `gestion` no falla al bajar la imagen privada):
 
    ```bash
    echo '<GHCR_READ_TOKEN>' | sudo docker login ghcr.io -u Roldemix --password-stdin
    ```
 
-6. `gw-aws`: el compose y el `Caddyfile` los trae el runner, pero el
-   certificado interno hay que levantarlo una vez y copiar su CA a `gw-azure`:
+6. `gw-aws` no abre SSH: el flujo le escribe `compose.yml` y `Caddyfile` por
+   SSM en cada despliegue. El certificado interno se genera la primera vez y
+   su CA hay que copiarla a `gw-azure` una sola vez (si se borra el volumen,
+   se repite). En una sesión de Session Manager sobre `gw-aws`:
 
    ```bash
-   sudo mkdir -p /opt/vidalstore/gw-aws
-   sudo docker compose -f deploy/aws/gw-aws/compose.yml up -d
    sudo docker cp vidalstore-gw-aws-borde-1:/data/caddy/pki/authorities/local/root.crt \
-     /opt/vidalstore/certs/aws-ca.crt
+     /tmp/aws-ca.crt
+   sudo base64 -w0 /tmp/aws-ca.crt
    ```
 
-   Ese `aws-ca.crt` se copia a `gw-azure` en `/opt/vidalstore/certs/aws-ca.crt`
-   (por `az vm run-command`). Sin ese archivo el borde público responde 502 al
-   llamar a `/v1/*`.
+   Ese valor se escribe en `gw-azure` (por `az vm run-command`):
+
+   ```bash
+   az vm run-command invoke -g rg-vidalstore-e3 -n gw-azure \
+     --command-id RunShellScript \
+     --scripts "mkdir -p /opt/vidalstore/certs && echo '<BASE64>' | base64 -d > /opt/vidalstore/certs/aws-ca.crt"
+   ```
+
+   Sin ese archivo el borde público responde 502 al llamar a `/v1/*`.
 
 ## Preparar Azure
 

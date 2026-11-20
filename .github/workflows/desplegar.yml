@@ -75,6 +75,41 @@ jobs:
             exit 1
           fi
 
+      - name: Borde privado de AWS
+        env:
+          REGION: us-east-1
+          INSTANCIA: vidalstore-gw-aws
+        run: |
+          set -euo pipefail
+          ID="$(aws ec2 describe-instances --region "$REGION" \
+            --filters "Name=tag:Name,Values=$INSTANCIA" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text)"
+          if [[ -z "$ID" || "$ID" == "None" ]]; then
+            echo "No se encontro la instancia $INSTANCIA en ejecucion." >&2
+            exit 1
+          fi
+
+          # Caddy no usa imagenes propias: solo viajan el compose y el Caddyfile.
+          # Se escriben por SSM porque el SG de gw-aws no abre SSH.
+          COMPOSE="$(base64 -w0 deploy/aws/gw-aws/compose.yml)"
+          CADDY="$(base64 -w0 deploy/aws/gw-aws/Caddyfile)"
+          ORDEN="set -e; mkdir -p /opt/vidalstore/gw-aws; echo '$COMPOSE' | base64 -d > /opt/vidalstore/gw-aws/compose.yml; echo '$CADDY' | base64 -d > /opt/vidalstore/gw-aws/Caddyfile; cd /opt/vidalstore/gw-aws; docker compose pull; docker compose up -d --force-recreate --remove-orphans"
+
+          COMANDO="$(aws ssm send-command --region "$REGION" \
+            --document-name AWS-RunShellScript \
+            --instance-ids "$ID" \
+            --comment "borde $GITHUB_SHA" \
+            --parameters "commands=[\"$ORDEN\"]" \
+            --query 'Command.CommandId' --output text)"
+
+          if ! aws ssm wait command-executed --region "$REGION" \
+            --command-id "$COMANDO" --instance-id "$ID"; then
+            aws ssm get-command-invocation --region "$REGION" \
+              --command-id "$COMANDO" --instance-id "$ID" \
+              --query '[Status,StandardOutputContent,StandardErrorContent]' --output text || true
+            exit 1
+          fi
+
   azure:
     name: Azure (borde y BFF)
     # Runner instalado en gw-azure, con etiqueta propia.
@@ -92,17 +127,23 @@ jobs:
         run: grep -E '^[A-Z0-9_]+=' deploy/versiones.env >> "$GITHUB_ENV"
 
       - name: BFF en la maquina privada
+        env:
+          TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          USUARIO: ${{ github.actor }}
         run: |
           set -euo pipefail
-          # El compose tambien viaja con el checkout: la maquina solo guarda .env.
-          ssh -i /opt/vidalstore/llaves/bff_ed25519 \
-            -o StrictHostKeyChecking=accept-new \
-            azureuser@10.1.2.10 \
-            "cat > /opt/vidalstore/bff/compose.yml" < deploy/azure/bff/compose.yml
-          ssh -i /opt/vidalstore/llaves/bff_ed25519 \
-            -o StrictHostKeyChecking=accept-new \
-            azureuser@10.1.2.10 \
-            "cd /opt/vidalstore/bff && REGISTRO='$REGISTRO' BFF_VERSION='$BFF_VERSION' docker compose pull && REGISTRO='$REGISTRO' BFF_VERSION='$BFF_VERSION' docker compose up -d --remove-orphans"
+          LLAVE=/opt/vidalstore/llaves/bff_ed25519
+          DESTINO=azureuser@10.1.2.10
+          SSH="ssh -i $LLAVE -o StrictHostKeyChecking=accept-new $DESTINO"
+
+          # El compose viaja con el checkout; /opt/vidalstore/bff es de root.
+          $SSH "sudo install -d -o azureuser -g azureuser /opt/vidalstore/bff && sudo tee /opt/vidalstore/bff/compose.yml >/dev/null" \
+            < deploy/azure/bff/compose.yml
+
+          # Las imagenes de GHCR son privadas: el login se hace en la maquina
+          # destino una vez por cada corrida, sin dejar el token en el historial.
+          printf '%s' "$TOKEN" | $SSH "sudo docker login ghcr.io --username '$USUARIO' --password-stdin"
+          $SSH "cd /opt/vidalstore/bff && sudo env REGISTRO='$REGISTRO' BFF_VERSION='$BFF_VERSION' docker compose pull && sudo env REGISTRO='$REGISTRO' BFF_VERSION='$BFF_VERSION' docker compose up -d --remove-orphans"
 
       - name: Borde publico y frontend
         run: |

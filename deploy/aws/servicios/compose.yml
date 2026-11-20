@@ -1,11 +1,11 @@
 # Servicios de aplicacion que viven en la maquina `servicios` de AWS.
-# Secretos y datos de conexion se leen de /opt/vidalstore/servicios.env
+# Secretos y datos de conexion se leen de /opt/vidalstore/servicios/.env
 # (no versionado). Las versiones llegan desde deploy/versiones.env.
 name: vidalstore-servicios
 
 x-cognito: &cognito
-  COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:?definir en /opt/vidalstore/servicios.env}
-  COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:?definir en /opt/vidalstore/servicios.env}
+  COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:?definir en /opt/vidalstore/servicios/.env}
+  COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:?definir en /opt/vidalstore/servicios/.env}
 
 x-kafka: &kafka
   KAFKA_BROKERS: ${KAFKA_BROKERS:-10.0.21.10:9092,10.0.22.10:9092,10.0.21.11:9092}
@@ -13,12 +13,12 @@ x-kafka: &kafka
 x-db: &db
   DB_HOST: ${DB_HOST:-10.0.21.20}
   DB_PORT: "5432"
-  DB_USER: ${DB_USER:?definir en /opt/vidalstore/servicios.env}
-  DB_PASSWORD: ${DB_PASSWORD:?definir en /opt/vidalstore/servicios.env}
+  DB_USER: ${DB_USER:?definir en /opt/vidalstore/servicios/.env}
+  DB_PASSWORD: ${DB_PASSWORD:?definir en /opt/vidalstore/servicios/.env}
   DB_NAME: ${DB_NAME:-vidalstore}
 
 x-rabbit: &rabbit
-  RABBITMQ_URL: ${RABBITMQ_URL:?definir en /opt/vidalstore/servicios.env}
+  RABBITMQ_URL: ${RABBITMQ_URL:?definir en /opt/vidalstore/servicios/.env}
 
 services:
   gateway:
