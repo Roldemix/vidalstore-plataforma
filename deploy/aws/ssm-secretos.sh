@@ -4,6 +4,7 @@
 # Uso: bash deploy/aws/ssm-secretos.sh servicios ~/secretos-vidalstore/servicios.env \
 #                                       gestion   ~/secretos-vidalstore/gestion.env
 set -euo pipefail
+export MSYS_NO_PATHCONV=1
 REGION="${AWS_REGION:-us-east-1}"
 while [[ $# -ge 2 ]]; do
   aws --region "$REGION" ssm put-parameter --name "/vidalstore/$1.env" \

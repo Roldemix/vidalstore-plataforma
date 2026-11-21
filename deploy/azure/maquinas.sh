@@ -71,6 +71,10 @@ echo "Esperando cloud-init en bff (puede tardar unos minutos)..."
 for _ in $(seq 1 40); do
   run bff "cloud-init status | grep -q 'status: done' && echo LISTO" | grep -q LISTO && break; sleep 15
 done
+# Carpetas de trabajo (idempotente; las VM de la entrega anterior no las tienen).
+PREP="install -d -o $ADMIN_USER -g $ADMIN_USER /opt/vidalstore /opt/vidalstore/bff /opt/vidalstore/gw-azure && install -d -o $ADMIN_USER -g $ADMIN_USER -m 700 /opt/vidalstore/secretos"
+run gw-azure "$PREP" >/dev/null
+run bff "$PREP" >/dev/null
 run bff "[ -f /home/$ADMIN_USER/.ssh/gw_azure_ed25519 ] || runuser -u $ADMIN_USER -- ssh-keygen -q -t ed25519 -N '' -C bff-deploy -f /home/$ADMIN_USER/.ssh/gw_azure_ed25519" >/dev/null
 PUB="$(run bff "cat /home/$ADMIN_USER/.ssh/gw_azure_ed25519.pub" | grep -o 'ssh-ed25519 [A-Za-z0-9+/=]* bff-deploy' | head -1)"
 [[ -n "$PUB" ]] || { echo "No se pudo leer la llave publica" >&2; exit 1; }
