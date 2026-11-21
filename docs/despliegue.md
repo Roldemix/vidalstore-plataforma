@@ -1,300 +1,144 @@
-# Despliegue EP3
+---
+title: "VidalStore EP3: despliegue multicloud"
+---
 
-El sistema corre en dos nubes y se despliega solo cuando se integra a `main` un
-cambio en [`deploy/versiones.env`](../deploy/versiones.env). No hay scripts que
-desplieguen la aplicación: los comandos de despliegue viven en
-[`.github/workflows/desplegar.yml`](../.github/workflows/desplegar.yml). Los
-scripts de `deploy/` solo preparan la infraestructura y los permisos.
+# 1. Resumen
 
-## Arquitectura desplegada
+VidalStore se despliega en dos nubes. **AWS (us-east-1, Learner Lab)** aloja los servicios, la mensajería, la base de datos y la administración. **Azure (northcentralus)** aloja el único punto público (`gw-azure`, con el frontend) y el BFF privado. Todo el despliegue se hace con el workflow `.github/workflows/desplegar.yml` y dos *self-hosted runners*; en GitHub no hay secretos.
 
-| Nube | Máquina | IP privada | Servicios | Entrada |
-|---|---|---|---|---|
-| AWS | `gw-aws` | `10.0.1.10` | Caddy con TLS interno | 443 solo desde la VNet de Azure |
-| AWS | `servicios` | `10.0.11.10` | gateway, catálogo, licencias, eventos | 8080 dentro del SG; 3001/3002/3010 desde Azure |
-| AWS | `gestion` | `10.0.11.20` | admin, Kafka UI | `127.0.0.1`, solo túnel SSM |
-| AWS | `mq-1`, `mq-2`, `mq-3` | `10.0.21.10`, `10.0.22.10`, `10.0.21.11` | Kafka y RabbitMQ | solo dentro del SG |
-| AWS | `datos` | `10.0.21.20` | PostgreSQL | solo dentro del SG |
-| Azure | `gw-azure` | `10.1.1.10` | Caddy público + frontend estático | 80 y 443 desde Internet |
-| Azure | `bff` | `10.1.2.10` | BFF | 8081 desde `gw-aws` y `gw-azure` |
+| Elemento | Valor |
+|---|---|
+| Repositorio de infraestructura | `roldemix/vidalstore-plataforma` (privado) |
+| Imágenes | `ghcr.io/roldemix/vidalstore-*` (7 paquetes públicos) |
+| Sitio público | `https://vidalstore-ep3.northcentralus.cloudapp.azure.com` |
+| Borde AWS | `https://54-225-233-40.sslip.io` (Elastic IP `54.225.233.40`) |
 
-El único nombre público es la IP de `gw-azure` con guiones y el sufijo
-`sslip.io`, por ejemplo `20-55-1-10.sslip.io`. Let's Encrypt valida por HTTP-01
-en el puerto 80 y el sitio queda en 443. No hace falta comprar un dominio ni
-editar DNS.
+# 2. Arquitectura
 
-### Camino de una petición
+## 2.1 AWS: 8 instancias EC2 (límite del Learner Lab)
 
-```text
-navegador ──HTTPS──► gw-azure ──HTTPS interno──► gw-aws ──HTTP──► gateway (AWS)
-                        │                                            │
-                        │ frontend estático                          ▼
-                        └──────────────────────────────────────► BFF (Azure)
-                                                                     │
-                                          ┌──────────────────────────┘
-                                          ▼
-                     catálogo / licencias / eventos (AWS, ruta privada)
+| Instancia | Subred / IP privada | Función |
+|---|---|---|
+| `vidalstore-nat` | pública, 10.0.1.5 | Salida a Internet de las subredes privadas (instancia NAT, sin NAT Gateway) |
+| `vidalstore-gw-aws` | pública, 10.0.1.10 | Caddy con certificado automático; 443 solo desde `gw-azure` |
+| `vidalstore-servicios` | app, 10.0.11.10 | Gateway y servicios de aplicación |
+| `vidalstore-gestion` | app, 10.0.11.20 | `vidalstore-admin`, Kafka UI y runner `aws` |
+| `vidalstore-mq-1/2/3` | datos, 10.0.21.10 / 10.0.22.10 / 10.0.21.11 | Kafka y RabbitMQ |
+| `vidalstore-datos` | datos, 10.0.21.20 | PostgreSQL |
+
+Todas usan `LabInstanceProfile`, sin SSH ni llaves: se administran con AWS Systems Manager (Session Manager). Se verificó que las 8 aparecen `Online` en SSM.
+
+## 2.2 Azure
+
+| VM | IP | Función |
+|---|---|---|
+| `gw-azure` | 10.1.1.10 / pública `20.221.220.67` | Borde público: Caddy (TLS), frontend, reenvío y NAT de `bff` |
+| `bff` | 10.1.2.10 (sin IP pública) | BFF y runner `azure` |
+
+Red `vnet-vidalstore` (10.1.0.0/16) con las subredes `snet-gw` y `snet-bff`. `bff` sale a Internet y a AWS por `gw-azure` (ruta definida por el usuario con reenvío y `MASQUERADE`). Región `northcentralus` por la política de la suscripción Azure for Students (cuota de 6 vCPU; se usan 4).
+
+# 3. Cumplimiento de las reglas
+
+**Cero secretos en GitHub.** `gh secret list` devuelve vacío. Las imágenes se descargan sin login; se verificó con `docker logout ghcr.io` y `docker pull` para las 7:
+
+```
+OK ghcr.io/roldemix/vidalstore-gateway:2b2091aead2ca762480dd5920cb5eeb952066d9e
+OK ghcr.io/roldemix/vidalstore-bff:0d0bb228cd1ddb5041b8a8f5cd0e0b780c88021d
+OK ghcr.io/roldemix/vidalstore-catalogo-service:4da9b6bbad431664c71311cf755db8c50d07e7c1
+OK ghcr.io/roldemix/vidalstore-licencias-service:8e0a7ad446f6423018e23da2d3078283de298b93
+OK ghcr.io/roldemix/vidalstore-eventos:100589529d2d2da7f05e62a1f18fef6a755f2ebd
+OK ghcr.io/roldemix/vidalstore-admin:bed8182cbe0063c732a268decc5c3e5f56d5a30c
+OK ghcr.io/roldemix/vidalstore-frontend:643b9e9a712cb218e07144d998f9cfd36e88acbd
 ```
 
-- `gw-azure` sirve `/` desde el contenedor `frontend` y reenvía `/v1/*` a
-  `gw-aws`, validando su CA interna con `/opt/vidalstore/certs/aws-ca.crt`.
-- `gw-aws` entrega `/v1/*` tal cual al gateway, que expone sus rutas bajo
-  `/v1` y valida el JWT antes de reenviar al BFF de Azure.
-- El gateway valida el JWT y reenvía al BFF de Azure.
-- El BFF autoriza por `cognito:groups` y compone las respuestas llamando a los
-  servicios de AWS por la ruta privada (`http://10.0.11.10:3001`, `:3002`,
-  `:3010`). Los servicios vuelven a validar el JWT que el BFF les pasa.
-- `admin` y Kafka UI no se publican en el borde: solo por túnel de Session
-  Manager a `gestion`. Así se cumple que las herramientas de administración no
-  quedan en Internet.
+**Solo Variables de repositorio**: `BUCKET`, `FRONTEND_URL` y `AWS_URL`.
 
-## Imágenes
+| Variable | Valor |
+|---|---|
+| `BUCKET` | `vidalstore-ep3-roldemix-20261120` |
+| `FRONTEND_URL` | `https://vidalstore-ep3.northcentralus.cloudapp.azure.com` |
+| `AWS_URL` | `https://54-225-233-40.sslip.io` |
 
-Cada repositorio tiene `imagen.yml` con dos trabajos:
+**Secretos en las nubes.**
 
-1. `pruebas`: `npm ci`, compilación y pruebas unitarias desde un clon limpio.
-2. `imagen`: publica en GHCR **solo** si `pruebas` terminó bien y la rama es
-   `main`. El tag es el SHA del commit.
+- AWS: `/vidalstore/servicios.env` y `/vidalstore/gestion.env` en Systems Manager Parameter Store (`SecureString`). La instancia los escribe con su rol IAM en cada despliegue (se verificó la lectura desde `gestion`).
+- Azure: `/opt/vidalstore/secretos/bff.env` y `/opt/vidalstore/secretos/gw-azure.env` (permisos 600, directorio 700).
 
-```bash
-docker pull ghcr.io/roldemix/vidalstore-eventos:<sha>
+**Runners.**
+
+| Runner | Etiqueta | Máquina | Cómo despliega |
+|---|---|---|---|
+| `aws-gestion` | `aws` | `gestion` (Amazon Linux; `git`, `libicu`, `tar`) | `aws ssm send-command` a `servicios`, `gestion` y `gw-aws`, con su rol IAM |
+| `azure-bff` | `azure` | `bff` (Ubuntu, privada) | Local en `bff`; SSH dentro de la VNet a `gw-azure` con una llave generada en `bff` |
+
+**Red y HTTPS.** El Security Group de `gw-aws` abre el 80 (reto ACME) y el 443 solo a `20.221.220.67/32`; no hay 22 abierto en ninguna máquina. `gw-aws` usa Caddy con el dominio `<ip-con-guiones>.sslip.io`. `gw-azure` usa Caddy en `network_mode: host` con `DOMINIO=vidalstore-ep3.northcentralus.cloudapp.azure.com`. No se usa `aws-ca.crt`.
+
+# 4. Flujo de despliegue
+
+`desplegar.yml` se ejecuta con push a `main` que cambie `deploy/**`, o a mano (`workflow_dispatch`). Tiene 4 jobs:
+
+1. **validar** (GitHub-hosted): Variables presentes, sintaxis de los scripts, SHA de 40 caracteres y descarga anónima de las 7 imágenes.
+2. **aws** (runner `aws`): escribe el `.env` desde Parameter Store y despliega con `docker compose` en `servicios`, `gestion` y `gw-aws` por SSM.
+3. **azure** (runner `azure`): despliega el BFF en local y `gw-azure` por SSH.
+4. **humo** (runner `azure`): comprueba el sitio y el borde de AWS; la salida de `bff` pasa por la IP de `gw-azure`, la única que acepta el 443 de `gw-aws`.
+
+Estado del último run: **[completar: URL del run y resultado de los 4 jobs]**.
+
+## 4.1 Certificado real en `gw-aws`
+
+El Caddyfile de `gw-aws` arranca en modo *staging* (`acme_ca` de pruebas). Cuando el certificado de pruebas sale bien, se comenta esa línea, se hace merge y el workflow reinicia Caddy con `--force-recreate`, sin borrar el volumen `/data`.
+
+**[completar: emisor antes (STAGING) y después (Let's Encrypt/ZeroSSL)]**
+
+# 5. Acceso a las herramientas
+
+Kafka UI y `vidalstore-admin` no tienen IP pública: se acceden solo por túnel de Session Manager hacia `gestion`:
+
 ```
-
-## Despliegue continuo
-
-1. El repositorio del servicio se integra a `main`; `imagen.yml` publica el SHA.
-2. En `vidalstore-plataforma` se cambia esa línea de `deploy/versiones.env` al
-   SHA nuevo.
-3. Al integrar ese cambio a `main`, `desplegar.yml` corre dos trabajos, uno en
-   cada nube, con un runner autoalojado por nube:
-   - `aws` (etiqueta `aws`, instalado en `servicios`): `docker compose pull` y
-     `up -d` de `deploy/aws/servicios/compose.yml`; por Session Manager copia
-     `deploy/aws/gestion/compose.yml` a `gestion` y ejecuta el mismo
-     `pull` + `up -d`, esperando el resultado del comando; y hace lo propio con
-     el `compose.yml` y el `Caddyfile` de `gw-aws`.
-   - `azure` (etiqueta `azure`, instalado en `gw-azure`): actualiza el borde y
-     el frontend, y por SSH copia el compose a `bff` y lo actualiza.
-
-Los archivos `compose.yml` y `Caddyfile` viajan en el checkout del runner: las
-máquinas solo guardan su `.env` (y la CA interna en `gw-azure`). No hay
-credenciales de AWS ni de Azure en GitHub.
-
-### Instalar el runner de AWS
-
-En `servicios`, por Session Manager:
-
-```bash
-sudo mkdir -p /opt/actions-runner && cd /opt/actions-runner
-curl -o runner.tar.gz -L \
-  https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
-sudo tar xzf runner.tar.gz
-sudo dnf install -y libicu || true   # dependencia de .NET en AL2023
-sudo ./config.sh --url https://github.com/Roldemix/vidalstore-plataforma \
-  --token <TOKEN_DE_UN_USO> --labels aws --unattended --replace
-sudo ./svc.sh install && sudo ./svc.sh start
-```
-
-El token se obtiene en *Settings → Actions → Runners → New self-hosted runner*
-y no se guarda en el repositorio. El runner usa el perfil de instancia
-(`LabInstanceProfile`) para llamar a SSM, así que no hay credenciales AWS en
-GitHub. La cuenta `ec2-user` tiene que estar en el grupo `docker` y
-`desplegar-ec2.sh` ya deja instalados `aws` (CLI v2) y el plugin
-`docker compose`.
-
-### Instalar el runner de Azure
-
-En `gw-azure`, con `az vm run-command invoke`:
-
-```bash
-sudo mkdir -p /opt/actions-runner && cd /opt/actions-runner
-curl -o runner.tar.gz -L \
-  https://github.com/actions/runner/releases/download/v2.338.2/actions-runner-linux-x64-2.338.2.tar.gz
-sudo tar xzf runner.tar.gz
-sudo ./bin/installdependencies.sh
-sudo chown -R azureuser:azureuser /opt/actions-runner
-sudo -u azureuser env HOME=/home/azureuser ./config.sh \
-  --url https://github.com/Roldemix/vidalstore-plataforma \
-  --token <TOKEN_DE_UN_USO> --labels azure --unattended --replace
-sudo ./svc.sh install azureuser && sudo ./svc.sh start
-```
-
-El runner queda como `azureuser` (en el grupo `docker`). Para que pueda leer
-la llave del BFF y escribir el compose del borde:
-
-```bash
-sudo chown -R azureuser:azureuser /opt/vidalstore/gw-azure /opt/vidalstore/llaves
-```
-
-No hay secretos en GitHub: las imágenes de GHCR son públicas y las credenciales
-de AWS y Azure nunca salen de sus máquinas. El runner de AWS usa el perfil de
-instancia y el de Azure solo la llave local hacia `bff`.
-
-## Preparar AWS
-
-1. Red e instancias: [`deploy/aws/crear-infraestructura.sh`](../deploy/aws/crear-infraestructura.sh)
-   y [`deploy/aws/desplegar-ec2.sh`](../deploy/aws/desplegar-ec2.sh).
-2. Reglas del Security Group de la EP3:
-
-   ```bash
-   export VPC_ID=vpc-...
-   bash deploy/aws/permisos-e3.sh
-   ```
-
-   Deja 443 y 3001/3002/3010 solo para `10.1.0.0/16` (la VNet de Azure), sin
-   nada abierto a Internet y sin 22. El script avisa si falta la ruta de vuelta
-   hacia Azure (peering o VPN de la EP2).
-3. Crear los topics antes de levantar la aplicación. El script
-   [`kafka/topics.sh`](../../kafka/topics.sh) es para el compose local; en la
-   nube se ejecuta el mismo CLI sobre el broker (por Session Manager en `mq-1`;
-   si Kafka corre en un contenedor, se antepone `docker exec <contenedor>`):
-
-   ```bash
-   K=/opt/kafka/bin/kafka-topics.sh
-   B=10.0.21.10:9092
-   for topico in compras actividad; do
-     $K --bootstrap-server $B --create --if-not-exists --topic vidalstore.$topico \
-       --partitions 3 --replication-factor 3 --config min.insync.replicas=2 \
-       --config retention.ms=604800000
-     $K --bootstrap-server $B --create --if-not-exists --topic vidalstore.$topico.dlt \
-       --partitions 3 --replication-factor 3 --config min.insync.replicas=2 \
-       --config retention.ms=2592000000
-   done
-   $K --bootstrap-server $B --create --if-not-exists --topic vidalstore.catalogo \
-     --partitions 3 --replication-factor 3 --config min.insync.replicas=2 \
-     --config cleanup.policy=compact --config retention.ms=2592000000
-   ```
-
-   También se pueden crear desde la API de la EP3 con el túnel abierto
-   (`POST /v1/admin/kafka/topics`).
-
-4. En cada máquina, solo el `.env` (los ejemplos están en
-   `deploy/aws/*/.env.ejemplo`, nunca se versionan claves reales):
-
-   ```bash
-   sudo mkdir -p /opt/vidalstore/{servicios,gestion}
-   sudo cp deploy/aws/servicios/.env.ejemplo /opt/vidalstore/servicios/.env
-   sudo cp deploy/aws/gestion/.env.ejemplo /opt/vidalstore/gestion/.env
-   ```
-
-5. `gw-aws` no abre SSH: el flujo le escribe `compose.yml` y `Caddyfile` por
-   SSM en cada despliegue. El certificado interno se genera la primera vez y
-   su CA hay que copiarla a `gw-azure` una sola vez (si se borra el volumen,
-   se repite). En una sesión de Session Manager sobre `gw-aws`:
-
-   ```bash
-   sudo docker cp vidalstore-gw-aws-borde-1:/data/caddy/pki/authorities/local/root.crt \
-     /tmp/aws-ca.crt
-   sudo base64 -w0 /tmp/aws-ca.crt
-   ```
-
-   Ese valor se escribe en `gw-azure` (por `az vm run-command`):
-
-   ```bash
-   az vm run-command invoke -g rg-vidalstore-e3 -n gw-azure \
-     --command-id RunShellScript \
-     --scripts "mkdir -p /opt/vidalstore/certs && echo '<BASE64>' | base64 -d > /opt/vidalstore/certs/aws-ca.crt"
-   ```
-
-   Sin ese archivo el borde público responde 502 al llamar a `/v1/*`.
-
-## Preparar Azure
-
-```bash
-bash deploy/azure/red.sh
-bash deploy/azure/maquinas.sh
-```
-
-`maquinas.sh` imprime el paso para generar la llave en `gw-azure` y autorizarla
-en `bff`. Después, en cada máquina solo el `.env`:
-
-```bash
-# gw-azure
-sudo mkdir -p /opt/vidalstore/gw-azure /opt/vidalstore/certs
-sudo cp deploy/azure/gw-azure/.env.ejemplo /opt/vidalstore/gw-azure/.env   # editar DOMINIO
-sudo cp <aws-ca.crt> /opt/vidalstore/certs/aws-ca.crt
-
-# bff
-sudo mkdir -p /opt/vidalstore/bff
-sudo cp deploy/azure/bff/.env.ejemplo /opt/vidalstore/bff/.env
-```
-
-Para ahorrar crédito: `bash deploy/azure/apagar.sh` y, al volver,
-`bash deploy/azure/encender.sh` (la IP pública es estática).
-
-## Verificación de la entrega
-
-### HTTPS y mismo origen
-
-```bash
-curl -I https://<ip-de-gw-azure>.sslip.io
-# Sin token, el gateway responde 401: la ruta llego hasta AWS.
-curl -s -o /dev/null -w '%{http_code}\n' https://<ip-de-gw-azure>.sslip.io/v1/catalogo
-# Con el token de un usuario, devuelve el catalogo.
-curl -s -H "Authorization: Bearer $TOKEN" \
-  https://<ip-de-gw-azure>.sslip.io/v1/catalogo | head
-```
-
-El frontend no tiene URLs fijas: fuera de `localhost` usa `${origin}/v1`
-(`src/app/catalogo.ts`), y el interceptor solo adjunta el token al gateway local
-o a esa misma ruta.
-
-### Mensajes desviados
-
-En `mq-3`, por Session Manager:
-
-```bash
-K=/opt/kafka/bin
-$K/kafka-get-offsets.sh --bootstrap-server 10.0.21.11:9092 \
-  --topic vidalstore.actividad.dlt
-$K/kafka-get-offsets.sh --bootstrap-server 10.0.21.11:9092 \
-  --topic vidalstore.compras.dlt
-```
-
-Con el dataset de referencia se esperan **58** mensajes en
-`vidalstore.actividad.dlt` (29 mensajes inválidos × los grupos `vidalstore-panel`
-y `vidalstore-alertas`) y **8** en `vidalstore.compras.dlt` (4 inválidos ×
-`vidalstore-panel` y `vidalstore-historial`). Si algún mensaje válido falla al
-procesarse, se sumará con `x-motivo=error-procesamiento`. Cada desviado lleva
-los headers originales más `x-motivo` (`json-invalido`, `falta-<campo>`,
-`dto-invalido`, `version-desconocida`, `postgres-noresponde`) y `x-grupo`.
-
-Los grupos son `vidalstore-panel`, `vidalstore-alertas`,
-`vidalstore-historial` y `vidalstore.catalogo`. El detalle está en
-[consumer-groups.md](consumer-groups.md).
-
-### Administración
-
-Solo por túnel, nunca por Internet:
-
-```bash
-aws ssm start-session --target <id-de-gestion> \
+aws ssm start-session --target <id-gestion> \
   --document-name AWS-StartPortForwardingSession \
-  --parameters 'portNumber=3020,localPortNumber=3020'
+  --parameters portNumber=3020,localPortNumber=3020
 ```
 
-Con el token de un administrador de Cognito, las rutas de la EP3 quedan en
-`http://localhost:3020/v1/admin/kafka`:
+Luego `http://localhost:3020`. **[completar: puerto de Kafka UI]**
 
-```bash
-TOKEN=<access_token>
-curl -s -H "Authorization: Bearer $TOKEN" localhost:3020/v1/admin/kafka/topics
-curl -s -H "Authorization: Bearer $TOKEN" localhost:3020/v1/admin/kafka/grupos
+# 6. Pruebas obligatorias de Kafka (evidencias)
+
+| N.º | Prueba | Estado |
+|---|---|---|
+| 1 | Mensaje a la cola `.dlt` con el simulador | Pendiente |
+| 2 | Caída de PostgreSQL con 3 reintentos | Pendiente |
+| 3 | Rutas de `vidalstore-admin` | Pendiente |
+| 4 | Rebobinado de 4 pasos de `vidalstore-historial` | Pendiente |
+| 5 | Salida adicional exigida por la rúbrica | Pendiente |
+
+Para cada prueba se pegará aquí el comando ejecutado y su salida real.
+
+**[completar evidencia 1]**
+
+**[completar evidencia 2]**
+
+**[completar evidencia 3]**
+
+**[completar evidencia 4]**
+
+**[completar evidencia 5]**
+
+# 7. Problemas encontrados y solución
+
+- **Docker en `gw-azure` descartaba el tráfico de `bff`.** Docker pone `FORWARD` en `DROP`; `bff` no tenía salida a Internet. Se añadieron reglas en `DOCKER-USER` para `10.1.0.0/16` con un servicio de systemd que corre tras Docker.
+- **Instancias de una versión anterior del script.** Se terminaron y se recrearon con el script nuevo (instancia NAT, `datos`, 8 en total).
+- **Runner antiguo en `gw-azure`.** Se retiró para que los jobs de Azure corran en `bff`.
+- **Git Bash convertía `/vidalstore/...` en rutas de Windows.** Se fijó `MSYS_NO_PATHCONV=1`.
+- **Región de Azure.** `FRONTEND_URL` se corrigió de `eastus2` a `northcentralus`.
+
+# 8. Estructura del repositorio
+
 ```
-
-Kafka UI sigue el mismo camino, con `portNumber=8085`.
-
-## Pendiente de completar antes de entregar
-
-Lo que no se puede resolver desde el código:
-
-- [ ] Reemplazar los ceros de `deploy/versiones.env` por los SHA reales de cada
-      repositorio después de la primera ejecución de `imagen.yml`.
-- [ ] Anotar las IP públicas reales (la de `gw-azure` y la de salida de
-      `gw-aws`) y el `sslip.io` usado en `DOMINIO`.
-- [ ] Registrar los dos runners autoalojados (`aws` y `azure`).
-- [ ] Copiar `aws-ca.crt` a `gw-azure` y comprobar `curl --cacert` contra
-      `https://10.0.1.10` desde esa máquina.
-- [ ] Verificar la ruta privada entre Azure y AWS (VPN o peering de la EP2). Sin
-      ella, `gw-azure` no alcanza `gw-aws`, el BFF no alcanza los servicios y
-      `/v1/*` devuelve 502.
-- [ ] Reemplazar las capturas de la sección de verificación en el informe.
+.github/workflows/desplegar.yml
+deploy/versiones.env
+deploy/aws/    desplegar-ec2.sh  permisos-e3.sh  ssm-secretos.sh  runner-gestion.sh
+               servicios/  gestion/  gw-aws/
+deploy/azure/  red.sh  maquinas.sh  secretos.sh  runner-bff.sh
+               bff/  gw-azure/
+```
